@@ -14,6 +14,9 @@ use uefi::boot;
 use uefi::proto::media::file::{File, FileAttribute, FileHandle, FileMode, RegularFile};
 use uefi::{cstr16, system, CStr16, CString16};
 
+#[cfg(feature = "local-esp")]
+pub const LOG_PATH: &CStr16 = cstr16!(r"\EFI\nvunlock\loader.log");
+#[cfg(not(feature = "local-esp"))]
 pub const LOG_PATH: &CStr16 = cstr16!(r"\loader.log");
 
 /// Close-and-reopen every marker line, Flush() on the count cadence.

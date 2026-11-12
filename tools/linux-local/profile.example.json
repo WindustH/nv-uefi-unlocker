@@ -1,0 +1,12 @@
+{
+  "esp_uuid": "REPLACE_WITH_ESP_UUID",
+  "disk": "/dev/nvme0n1",
+  "partition": 1,
+  "bdf": "0000:01:00.0",
+  "default_id": "REPLACE_WITH_EXISTING_GRUB_MENUENTRY_ID",
+  "assets": "/absolute/path/to/locally-generated-ad102-assets",
+  "efi": "/absolute/path/to/loader.efi",
+  "user_bin": "/home/YOUR_USER/bin",
+  "auto_unlock": true,
+  "iomem_relaxed": false
+}

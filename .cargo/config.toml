@@ -6,3 +6,4 @@ efi-debug = "build -p loader --target x86_64-unknown-uefi"
 xt = "test --workspace --exclude loader"
 # gated transaction build (GPU-write paths; flash only with the explicit user go)
 efi-tx = "build --release -p loader --target x86_64-unknown-uefi --features tx"
+efi-local = "build --release -p loader --target x86_64-unknown-uefi --features local-esp"

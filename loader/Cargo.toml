@@ -19,6 +19,8 @@ default = []
 # build is the gated artifact (constitution 1.7 - never flash one without
 # the explicit user go).
 tx = []
+# Local ESP deployment stores assets, markers and logs beside its EFI.
+local-esp = ["tx"]
 
 [build-dependencies]
 # none: build.rs uses std only

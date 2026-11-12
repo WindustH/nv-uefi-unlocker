@@ -17,8 +17,10 @@ mod chainload;
 mod gop;
 mod keywait;
 mod logging;
+mod menu_once;
 mod pci;
 mod sample;
+mod storage_path;
 mod timing;
 #[cfg(feature = "tx")]
 mod tx;
@@ -37,12 +39,15 @@ mod tx_portal;
 #[cfg(feature = "tx")]
 mod tx_prep;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(feature = "local-esp")]
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+local.esp.3");
+#[cfg(not(feature = "local-esp"))]
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+local.menu.3");
 
 /// CONFIRM semantics switch (armed mode): when this file exists on the
 /// stick root, the operator has declared intent ON THE STICK ITSELF - the
 /// wait becomes a short countdown that auto-proceeds, any key aborts. The
-/// first marker line may set the countdown seconds (1..=30, default 5).
+/// first marker line may set the countdown seconds (0..=30, default 5).
 const ARMED_MARKER: &CStr16 = cstr16!(r"\i_know_what_i_am_doing.txt");
 /// Issue #38: verdict-lines-only console output. Some iGPU GOPs render
 /// ~1 line/s, so the full console mirror cost minutes per run; the log
@@ -98,7 +103,11 @@ fn main() -> Status {
         Ok(()) => info!("WATCHDOG: disabled"),
         Err(e) => info!("WATCHDOG: disable failed: {:?}", e.status()),
     }
-    banner::print(VERSION);
+    // The helper and GRUB already share this one-time flag. Read it from
+    // this same ESP; GRUB consumes it after either unlock or skip.
+    let menu_requested = chainload::boot_volume_read_root(cstr16!(r"\grub\grubenv"))
+        .is_some_and(|env| menu_once::requested(&env));
+    banner::print(VERSION, menu_requested);
 
     // Phase: DIAG identity dumps (#122/#170). Read-only, before anything can
     // hang: names the console's anchor device (GPU-GOP vs VGA/UART) and the
@@ -137,13 +146,16 @@ fn main() -> Status {
     // machine could run the transaction unattended). Read-only builds keep
     // the M0 semantics. Armed mode (marker file on the stick root) inverts
     // this: an N-second countdown auto-proceeds (first marker line sets N,
-    // 1..=30, default 5), any key aborts - the file is the operator's
+    // 0..=30, default 5), any key aborts - the file is the operator's
     // explicit declaration of intent, so unattended runs are opt-in per
     // stick, never a default. TX builds run the countdown WITH the read-only
     // prep interleaved (enumerate / GOP probe / sample / select / asset
     // reads into the tx.rs read-through cache): the first GPU touch still
     // happens only after PROCEED, and aborting mid-prep writes nothing.
-    let confirmed = if let Some(content) = chainload::boot_volume_read(ARMED_MARKER) {
+    let confirmed = if menu_requested {
+        info!("CONFIRM: one-time GRUB request - Enter unlocks, Esc skips, 5s timeout unlocks");
+        keywait::wait_confirm_menu()
+    } else if let Some(content) = chainload::boot_volume_read(ARMED_MARKER) {
         let secs = chainload::parse_armed_seconds(&content);
         info!(
             "CONFIRM: \\i_know_what_i_am_doing.txt present - ARMED: {secs}s countdown auto-runs, ANY key aborts"

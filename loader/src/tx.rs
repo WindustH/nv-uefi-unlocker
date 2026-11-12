@@ -694,7 +694,8 @@ fn pre_flr_experiment(handle: uefi::Handle) -> bool {
 /// content: the UI switches are zero-byte marker files by design, so
 /// anything that treats "size 0" as "absent" silently disables them.
 pub fn probe_file(path: &str) -> bool {
-    let Ok(path_c) = uefi::CString16::try_from(path) else {
+    let local = crate::storage_path::resolve(path, cfg!(feature = "local-esp"));
+    let Ok(path_c) = uefi::CString16::try_from(local.as_str()) else {
         return false;
     };
     use uefi::proto::media::file::{File, FileMode};
@@ -852,7 +853,8 @@ fn read_boot_file_inner(path: &str) -> Inner {
 
 fn read_boot_file_uncached(path: &str) -> Inner {
     // Runtime path: CString16::try_from (cstr16! only takes literals).
-    let path_c = match uefi::CString16::try_from(path) {
+    let local = crate::storage_path::resolve(path, cfg!(feature = "local-esp"));
+    let path_c = match uefi::CString16::try_from(local.as_str()) {
         Ok(p) => p,
         Err(_) => { info!("TX-ASSET-DIAG: {path} not UCS-2 convertible"); return Inner::Failed; }
     };
@@ -890,7 +892,7 @@ fn read_boot_file_uncached(path: &str) -> Inner {
                 // ACCESS_DENIED" on a stick where the marker simply did not
                 // exist - it reads like a fault, it is not one).
                 let asset_shaped = orig_path.ends_with(".bin");
-                if asset_shaped && !orig_path.starts_with("\\usbroot\\") {
+                if !cfg!(feature = "local-esp") && asset_shaped && !orig_path.starts_with("\\usbroot\\") {
                     let alt = alloc::format!("\\usbroot{}", orig_path);
                     let probe = read_boot_file_uncached(&alt);
                     if matches!(probe, Inner::Content(_)) {

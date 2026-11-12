@@ -30,6 +30,8 @@ payload_*
 # local IDE / agent session state
 /.idea/
 /.zcode/
+__pycache__/
+*.pyc
 
 # local release artifacts (only the make-* scripts are tracked; binaries and
 # per-run stick roots stay local and are distributed via GitHub Releases)

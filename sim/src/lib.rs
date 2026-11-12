@@ -293,6 +293,12 @@ pub mod devpath;
 pub mod chain_scope;
 pub mod log_gate;
 pub mod gate_parse;
+#[cfg(test)]
+#[path = "../../loader/src/menu_once.rs"]
+mod menu_once;
+#[cfg(test)]
+#[path = "../../loader/src/storage_path.rs"]
+mod storage_path;
 pub mod dma;
 pub mod layout;
 pub mod radix;

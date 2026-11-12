@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+set -euo pipefail
+base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+command=${1:-help}
+if (( $# )); then shift; fi
+case "$command" in
+  install|uninstall|status)
+    args=(/usr/bin/python3 "$base/src/tools/linux-local/manage.py" "$command")
+    if [[ "$command" == install ]]; then args+=(--profile "$base/state/profile.json"); fi
+    if (( EUID != 0 )); then exec /usr/bin/sudo -- "${args[@]}" "$@"; fi
+    exec "${args[@]}" "$@"
+    ;;
+  diagnose)
+    bdf=$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bdf"])' "$base/state/profile.json")
+    exec /usr/bin/sudo -- /usr/bin/python3 "$base/src/tools/diag-unlock.py" --bdf "$bdf" "$@"
+    ;;
+  build)
+    cd "$base/src"
+    cargo xt --locked
+    python3 -m unittest discover -s tools/linux-local -p 'test_*.py'
+    cargo efi-local --locked
+    python3 check_efi.py target/x86_64-unknown-uefi/release/loader.efi
+    mkdir -p "$base/build"
+    install -m 644 target/x86_64-unknown-uefi/release/loader.efi "$base/build/BOOTX64.EFI"
+    (cd "$base/build" && sha256sum BOOTX64.EFI > SHA256SUMS)
+    ;;
+  help|--help|-h)
+    printf '%s\n' 'Usage: ./nv-unlocker {status|diagnose|build|install|uninstall}' \
+      '  install --dry-run     Preview installation/update without changing the system' \
+      '  uninstall --dry-run   Preview removal without changing the system' \
+      '  install               Install or update using state/profile.json' \
+      '  uninstall             Restore normal boot and remove managed files' \
+      '  status                Verify installed files and boot entry' \
+      '  diagnose              Read the live GPU unlock state (root required)' \
+      '  build                 Run tests and build the local TX EFI' \
+      'No command automatically reboots the machine.'
+    ;;
+  *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
+esac

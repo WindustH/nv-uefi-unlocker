@@ -435,21 +435,43 @@ def inventory():
     return 0
 
 
+# Local adaptation: page-sized mappings; read-only unless --reapply is explicit.
 class Bar0:
-    def __init__(self, devpath):
+    def __init__(self, devpath, writable=False):
         with open(os.path.join(devpath, "resource")) as f:
-            start = int(f.readline().split()[0], 16)
-        if start == 0:
+            fields = f.readline().split()
+        self.start, end = (int(v, 16) for v in fields[:2])
+        if not self.start:
             raise RuntimeError("BAR0 not assigned (device powered down?)")
-        self.start = start
-        f = open(os.path.join(devpath, "resource0"), "r+b", 0)
-        self.map = mmap.mmap(f.fileno(), 16 * 1024 * 1024)
+        self.size = end - self.start + 1
+        self.writable = writable
+        self.fd = os.open(os.path.join(devpath, "resource0"),
+                          os.O_RDWR if writable else os.O_RDONLY)
+        self.pages = {}
+
+    def page(self, off):
+        if off < 0 or off + 4 > self.size or off % 4:
+            raise RuntimeError(f"invalid BAR0 register offset {off:#x}")
+        base = off // mmap.PAGESIZE * mmap.PAGESIZE
+        if base not in self.pages:
+            prot = mmap.PROT_READ | (mmap.PROT_WRITE if self.writable else 0)
+            try:
+                self.pages[base] = mmap.mmap(
+                    self.fd, min(mmap.PAGESIZE, self.size - base),
+                    flags=mmap.MAP_SHARED, prot=prot, offset=base)
+            except OSError as e:
+                raise RuntimeError(f"BAR0 page {base:#x} mapping failed: {e}") from e
+        return self.pages[base], off - base
 
     def rd(self, off):
-        return int.from_bytes(self.map[off : off + 4], "little")
+        page, pos = self.page(off)
+        return int.from_bytes(page[pos:pos + 4], "little")
 
     def wr(self, off, val):
-        self.map[off : off + 4] = int.to_bytes(val, 4, "little")
+        if not self.writable:
+            raise RuntimeError("read-only diagnostic mapping")
+        page, pos = self.page(off)
+        page[pos:pos + 4] = int.to_bytes(val, 4, "little")
 
 
 def family_of(boot0):
@@ -749,12 +771,17 @@ def main():
     for bdf, devpath in devs:
         print(f"{bdf}:")
         try:
-            bar = Bar0(devpath)
-        except (PermissionError, RuntimeError) as e:
+            bar = Bar0(devpath, writable=args.reapply)
+        except (OSError, RuntimeError) as e:
             print(f"  BAR0 unavailable: {e}")
             rc = 1
             continue
-        st = report(bar, devpath=devpath)
+        try:
+            st = report(bar, devpath=devpath)
+        except (OSError, RuntimeError) as e:
+            print(f"  BAR0 read failed: {e}")
+            rc = 1
+            continue
         read_rebar(devpath)
         if st is None:
             continue

@@ -5,7 +5,7 @@
 //! and `parse_flush_lines` must stay textually identical to the copies
 //! here (loader is UEFI-target-only and cannot run host tests; sim is the
 //! test bench). These parse the two stick-root knobs: the armed countdown
-//! seconds (`\i_know_what_i_am_doing.txt`, 1..=30, default 5) and the log
+//! seconds (`\i_know_what_i_am_doing.txt`, 0..=30, default 5) and the log
 //! flush cadence (`\tx-flush-lines.txt`, 0..=4096, default 16, 0 =
 //! marker-lines only).
 
@@ -33,7 +33,7 @@ fn parse_marker_number(content: &[u8], default: u64, min: u64, max: u64) -> u64 
 }
 
 pub fn parse_armed_seconds(content: &[u8]) -> u64 {
-    parse_marker_number(content, 5, 1, 30)
+    parse_marker_number(content, 5, 0, 30)
 }
 
 pub fn parse_flush_lines(content: &[u8]) -> u64 {
@@ -45,11 +45,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn armed_seconds_clamped_to_1_30() {
+    fn armed_seconds_clamped_to_0_30() {
         assert_eq!(parse_armed_seconds(b"2\r\n"), 2);
         assert_eq!(parse_armed_seconds(b" 2s\n"), 2); // leading digits only
         assert_eq!(parse_armed_seconds(b"02"), 2);
-        assert_eq!(parse_armed_seconds(b"0"), 1); // an abort window must remain
+        assert_eq!(parse_armed_seconds(b"0"), 0); // explicit local zero-wait opt-in
+        assert_eq!(parse_armed_seconds(b"0\n"), 0); // installed marker format
         assert_eq!(parse_armed_seconds(b"999"), 30);
         assert_eq!(parse_armed_seconds(b"184467440737095516160"), 30); // saturate+clamp
     }

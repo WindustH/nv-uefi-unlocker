@@ -1,0 +1,79 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+mode=${1:-reboot}
+if (( $# > 1 )); then
+    printf 'Usage: reboot-with-grub-menu [--prepare-only|--cancel|--status|--help]\n' >&2
+    exit 2
+fi
+case "$mode" in
+    --help|-h)
+        printf '%s\n' 'reboot-with-grub-menu: ask whether to unlock the GPU, then show GRUB once.' \
+          '  At the next boot: Enter = unlock now; Esc = skip unlock; 5s timeout = unlock.' \
+          '  GRUB waits for your selection; later boots return to normal fast boot.' \
+          '  no arguments     Save work first: schedule both menus and reboot now.' \
+          '  --prepare-only   Schedule both menus without rebooting.' \
+          '  --cancel         Cancel the pending unlock question and GRUB menu.' \
+          '  --status         Show whether both menus are pending.'
+        exit 0 ;;
+    reboot|--prepare-only|--cancel|--status) ;;
+    *) printf 'Unknown option: %s\n' "$mode" >&2; exit 2 ;;
+esac
+
+if (( EUID != 0 )) && [[ "$mode" != --status ]]; then
+    exec /usr/bin/sudo -- /usr/local/libexec/reboot-with-grub-menu "$@"
+fi
+
+envfile=/boot/grub/grubenv
+key=windy_show_grub_once
+read_pending() {
+    local current
+    # The environment block is text; reading it directly avoids an unprivileged
+    # grub-editenv disk probe. Writes still go through grub-editenv below.
+    current=$(/usr/bin/cat "$envfile") || return
+    if [[ "$current" != '# GRUB Environment Block'* ]]; then
+        printf 'Invalid GRUB environment block.\n' >&2
+        return 1
+    fi
+    if [[ $'\n'"$current"$'\n' == *$'\n'"$key=1"$'\n'* ]]; then
+        printf '1\n'
+    else
+        printf '0\n'
+    fi
+}
+pending=$(read_pending)
+if [[ "$mode" == --status ]]; then
+    if [[ "$pending" == 1 ]]; then
+        printf 'Next boot: 5s unlock question (Enter = unlock, Esc = skip, default = unlock), then GRUB menu.\n'
+    else
+        printf 'Next boot: normal fast boot.\n'
+    fi
+    exit 0
+fi
+if [[ "$mode" == --cancel ]]; then
+    /usr/bin/grub-editenv "$envfile" unset "$key"
+    printf 'One-time unlock question and GRUB menu request cancelled.\n'
+    exit 0
+fi
+previous=$pending
+/usr/bin/grub-editenv "$envfile" set "$key=1"
+pending=$(read_pending)
+if [[ "$pending" != 1 ]]; then
+    printf 'Could not verify the one-time menu setting; not rebooting.\n' >&2
+    exit 1
+fi
+/usr/bin/sync "$envfile"
+printf 'Next boot: unlock question (5s default = unlock, Enter = unlock now, Esc = skip).\n'
+printf 'Then GRUB will wait for your selection; later boots remain automatic.\n'
+if [[ "$mode" == --prepare-only ]]; then exit 0; fi
+printf 'Rebooting now...\n'
+if /usr/bin/systemctl reboot; then
+    exit 0
+else
+    # Respect shutdown inhibitors; do not leave an unexpected request on failure.
+    if (( previous == 0 )); then
+        /usr/bin/grub-editenv "$envfile" unset "$key"
+    fi
+    printf 'Reboot was not accepted; the previous menu setting was restored.\n' >&2
+    exit 1
+fi

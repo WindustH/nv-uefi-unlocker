@@ -314,6 +314,13 @@ const MARKER_READ_CAP: usize = 4096;
 /// silent; volume-level failures are logged (they explain a marker that
 /// "should have" engaged but did not).
 pub fn boot_volume_read(path: &CStr16) -> Option<alloc::vec::Vec<u8>> {
+    let local = crate::storage_path::resolve(&alloc::format!("{path}"), cfg!(feature = "local-esp"));
+    let local = uefi::CString16::try_from(local.as_str()).ok()?;
+    boot_volume_read_root(&local)
+}
+
+/// OS-owned files (GRUB environment) stay at their actual ESP paths.
+pub fn boot_volume_read_root(path: &CStr16) -> Option<alloc::vec::Vec<u8>> {
     let mut fs = match boot::get_image_file_system(boot::image_handle()) {
         Ok(fs) => fs,
         Err(e) => {
@@ -392,12 +399,12 @@ fn parse_marker_number(content: &[u8], default: u64, min: u64, max: u64) -> u64 
     value.clamp(min, max)
 }
 
-/// `\i_know_what_i_am_doing.txt` countdown seconds: first line 1..=30,
+/// `\i_know_what_i_am_doing.txt` countdown seconds: first line 0..=30,
 /// default 5 (the historical constant) when the content carries no usable
 /// number. The marker file is the operator's declaration of intent; the
-/// number only shortens the abort window they still own.
+/// Local opt-in: zero proceeds immediately after the read-only prep.
 pub fn parse_armed_seconds(content: &[u8]) -> u64 {
-    parse_marker_number(content, 5, 1, 30)
+    parse_marker_number(content, 5, 0, 30)
 }
 
 /// `\tx-flush-lines.txt` flush cadence: 0..=4096 count-based flushes per

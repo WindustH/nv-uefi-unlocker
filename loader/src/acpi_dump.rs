@@ -20,6 +20,9 @@ use uefi::table::cfg::ConfigTableEntry;
 use uefi::{cstr16, CStr16};
 
 const MARKER: &CStr16 = cstr16!(r"\tx-acpi-dump.txt");
+#[cfg(feature = "local-esp")]
+const OUT_DIR: &CStr16 = cstr16!(r"\EFI\nvunlock\acpi");
+#[cfg(not(feature = "local-esp"))]
 const OUT_DIR: &CStr16 = cstr16!(r"\acpi");
 
 /// Per-table and total caps: AML tables are a few hundred KiB at most;

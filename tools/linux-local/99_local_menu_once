@@ -1,0 +1,17 @@
+#!/bin/sh
+# Keep the usual boot fast; consume the explicit one-time menu request.
+cat <<'GRUB'
+if [ "${windy_show_grub_once}" = "1" ]; then
+  set windy_show_grub_once=
+  if [ "${env_block}" ]; then
+    save_env -f "${env_block}" windy_show_grub_once
+  else
+    save_env windy_show_grub_once
+  fi
+  set timeout_style=menu
+  set timeout=-1
+else
+  set timeout_style=hidden
+  set timeout=0
+fi
+GRUB

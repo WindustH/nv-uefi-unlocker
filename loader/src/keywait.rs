@@ -1,8 +1,8 @@
 //! Single-key confirmation with timeout (TOTORONG interaction pattern).
 
-use core::time::Duration;
+use core::{fmt::Write, time::Duration};
 use log::info;
-use uefi::proto::console::text::Key;
+use uefi::proto::console::text::{Color, Key};
 use uefi::{boot, system};
 
 pub enum KeyOrTimeout {
@@ -121,4 +121,86 @@ pub fn wait_confirm_armed(seconds: u64) -> Confirm {
     }
     info!("CONFIRM: {seconds}s armed countdown elapsed - PROCEED (marker file opted in)");
     Confirm::Proceed
+}
+
+/// The explicit one-time menu request takes precedence over normal auto-run.
+/// No prep/GPU writes occur while this question is shown; Escape continues
+/// to GRUB through the existing Abort path, not an extra reboot.
+pub fn wait_confirm_menu() -> Confirm {
+    use crate::menu_once::{self, Decision};
+
+    let (column, row, cursor_was_visible) = system::with_stdout(|out| {
+        let (cols, rows) = out.current_mode().ok().flatten()
+            .map(|m| (m.columns(), m.rows())).unwrap_or((80, 25));
+        let column = cols.saturating_sub(58) / 2;
+        let row = rows.saturating_sub(9) / 2;
+        let visible = out.cursor_visible();
+        let _ = out.set_color(Color::LightGray, Color::Black);
+        let _ = out.clear();
+        let _ = out.enable_cursor(false);
+        let lines = [
+            "+--------------------------------------------------------+",
+            "|                 NVIDIA GPU UNLOCK                      |",
+            "|                                                        |",
+            "|  Unlock the GPU before opening the GRUB menu?           |",
+            "|                                                        |",
+            "|  ENTER  Unlock now       ESC  Skip unlock this boot     |",
+            "|                                                        |",
+            "|  Default: unlock                                       |",
+            "+--------------------------------------------------------+",
+        ];
+        let _ = out.set_color(Color::LightCyan, Color::Black);
+        for (offset, line) in lines.iter().enumerate() {
+            let _ = out.set_cursor_position(column, row + offset);
+            let _ = write!(out, "{line}");
+        }
+        (column, row, visible)
+    });
+    // Start the five seconds after drawing, even on a slow firmware console.
+    let t0 = crate::timing::ms_since_entry();
+    let mut fallback_ms = 0u64;
+    let mut shown_seconds = u64::MAX;
+    let (decision, enter_pressed) = loop {
+        let elapsed = match (t0, crate::timing::ms_since_entry()) {
+            (Some(start), Some(now)) => now.saturating_sub(start),
+            _ => fallback_ms,
+        };
+        let (scan, unicode) = match poll_key() {
+            Some(Key::Printable(c)) => (0, u16::from(c)),
+            Some(Key::Special(code)) => (code.0, 0),
+            None => (0, 0),
+        };
+        let decision = menu_once::decide(scan, unicode, elapsed);
+        if decision != Decision::Wait {
+            break (decision, scan == 0 && matches!(unicode, 0x0d | 0x0a));
+        }
+        let remaining = menu_once::WAIT_MS.saturating_sub(elapsed).div_ceil(1000);
+        if remaining != shown_seconds {
+            system::with_stdout(|out| {
+                let _ = out.set_cursor_position(column + 3, row + 7);
+                let _ = out.set_color(Color::White, Color::Black);
+                let _ = write!(out, "Default: unlock in {remaining}s                     ");
+            });
+            shown_seconds = remaining;
+        }
+        boot::stall(Duration::from_millis(50));
+        fallback_ms += 50;
+    };
+    system::with_stdout(|out| {
+        let _ = out.set_color(Color::LightGray, Color::Black);
+        let _ = out.clear();
+        let _ = out.enable_cursor(cursor_was_visible);
+    });
+    match decision {
+        Decision::Skip => {
+            info!("CONFIRM: Esc - SKIP unlock this boot; continuing to GRUB (no GPU writes)");
+            Confirm::Abort
+        }
+        Decision::Unlock => {
+            let reason = if enter_pressed { "Enter" } else { "5s timeout (default)" };
+            info!("CONFIRM: {reason} - PROCEED with unlock, then GRUB");
+            Confirm::Proceed
+        }
+        Decision::Wait => unreachable!(),
+    }
 }
